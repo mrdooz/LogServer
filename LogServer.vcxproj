@@ -62,6 +62,7 @@
       <PrecompiledHeader>Use</PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
       <DebugInformationFormat>EditAndContinue</DebugInformationFormat>
+      <DisableSpecificWarnings>4355</DisableSpecificWarnings>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -90,17 +91,29 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="dx_utils.cpp" />
+    <ClCompile Include="file_utils.cpp" />
+    <ClCompile Include="graphics.cpp" />
     <ClCompile Include="log_server.cpp" />
     <ClCompile Include="stdafx.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="utils.cpp" />
+    <ClCompile Include="window.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="dx_utils.hpp" />
+    <ClInclude Include="dynamic_buffers.hpp" />
+    <ClInclude Include="file_utils.hpp" />
+    <ClInclude Include="graphics.hpp" />
     <ClInclude Include="log_messages.hpp" />
     <ClInclude Include="log_server.hpp" />
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="targetver.h" />
+    <ClInclude Include="utils.hpp" />
+    <ClInclude Include="vertex_types.hpp" />
+    <ClInclude Include="window.hpp" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\zeromq-2.1.10\builds\msvc\libzmq\libzmq.vcxproj">

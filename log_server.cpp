@@ -1,101 +1,160 @@
-// DebugServer.cpp : Defines the entry point for the console application.
-//
-
 #include "stdafx.h"
-#include <string>
-#include <memory>
 #include "log_messages.hpp"
 #include "log_server.hpp"
+#include "window.hpp"
+#include "graphics.hpp"
+#include "dynamic_buffers.hpp"
+#include "dx_utils.hpp"
+#include "utils.hpp"
+
+static const uint32 WM_NEW_FRAME = WM_APP + 1;
 
 using namespace std;
 
-class Window {
-public:
-	typedef LRESULT (CALLBACK *_WindowProc)(__in  HWND hwnd, __in  UINT uMsg, __in  WPARAM wParam, __in  LPARAM lParam);
-
-	Window(HINSTANCE instance, int width, int height, const std::string &class_name, const std::string &window_name, _WindowProc wndproc);
-	bool create();
-private:
-	void set_client_size();
-
-	HWND _hwnd;
-	HINSTANCE _instance;
-	int _width, _height;
-	std::string _class_name;
-	std::string _window_name;
-	_WindowProc _wnd_proc;
+struct ThreadConfig {
+	HWND wnd;
+	LogServer *log_server;
+	void *context;
 };
 
-Window::Window(HINSTANCE instance, int width, int height, const std::string &class_name, const std::string &window_name, _WindowProc wndproc)
-	: _instance(instance)
-	, _width(width)
-	, _height(height)
-	, _class_name(class_name)
-	, _window_name(window_name)
-	, _wnd_proc(wndproc)
+struct NewFrameMsg {
+	NewFrameMsg(uint8 *start, uint8 *end) : start(start), end(end) {}
+	uint8 *start;
+	uint8 *end; // 1 byte past end
+};
+
+LRESULT CALLBACK LogServer::WndProc( HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam )
 {
-}
+	static LogServer *self = nullptr;
 
-void Window::set_client_size()
-{
-	RECT client_rect;
-	RECT window_rect;
-	GetClientRect(_hwnd, &client_rect);
-	GetWindowRect(_hwnd, &window_rect);
-	window_rect.right -= window_rect.left;
-	window_rect.bottom -= window_rect.top;
-	window_rect.left = window_rect.top = 0;
-	const int dx = window_rect.right - client_rect.right;
-	const int dy = window_rect.bottom - client_rect.bottom;
-
-	SetWindowPos(_hwnd, NULL, -1, -1, _width + dx, _height + dy, SWP_NOZORDER | SWP_NOREPOSITION);
-}
-
-bool Window::create()
-{
-	WNDCLASSEX wcex;
-	ZeroMemory(&wcex, sizeof(wcex));
-
-	wcex.cbSize = sizeof(WNDCLASSEX);
-	wcex.style          = CS_HREDRAW | CS_VREDRAW;
-	wcex.lpfnWndProc    = _wnd_proc;
-	wcex.hInstance      = _instance;
-	wcex.hbrBackground  = 0;
-	wcex.lpszClassName  = _class_name.c_str();
-
-	if (!RegisterClassEx(&wcex))
-		return false;
-
-	const UINT window_style = WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS;
-
-	_hwnd = CreateWindow(_class_name.c_str(), _window_name.c_str(), window_style,
-		CW_USEDEFAULT, CW_USEDEFAULT, _width, _height, NULL, NULL,
-		_instance, NULL);
-
-	set_client_size();
-
-	ShowWindow(_hwnd, SW_SHOW);
-
-	return true;
-}
-
-LRESULT CALLBACK WndProc( HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam )
-{
 	switch (message) {
-	case WM_DESTROY:
-		PostQuitMessage(0);
-		break;
+		case WM_CREATE: {
+			CREATESTRUCT *cs = (CREATESTRUCT *)lParam;
+			self = (LogServer *)cs->lpCreateParams;
+			break;
+		}
+
+		case WM_NEW_FRAME: {
+			NewFrameMsg *msg = (NewFrameMsg *)wParam;
+			self->handle_new_frame_msg(msg);
+			delete msg;
+			break;
+		}
+
+		case WM_DESTROY:
+			PostQuitMessage(0);
+			break;
 	}
 
 	return DefWindowProc(hWnd, message, wParam, lParam);
 }
 
-DWORD WINAPI LogServer::server_thread(void *context) {
+void LogServer::handle_new_frame_msg(const NewFrameMsg *msg) {
 
-	context = zmq_init(1);
+	ID3D11Device *device = _graphics->device();
+	ID3D11DeviceContext *context = _graphics->context();
+	XMMATRIX mtx_proj = XMMatrixIdentity();
 
+	vector<PosCol> verts;
+	vector<uint32> indices;
+
+	uint8 *ptr = (uint8 *)msg->start;
+	while (ptr != msg->end) {
+		log_msg::Base *b = (log_msg::Base *)ptr;
+		switch (b->cmd) {
+
+			case log_msg::kCmdSetupWindow: {
+				log_msg::SetupWindow *s = (log_msg::SetupWindow *)b;
+				mtx_proj = XMMatrixOrthographicOffCenterLH(0, (float)s->width, 0, (float)s->height, 1, 100);
+				ptr += sizeof(log_msg::SetupWindow);
+				break;
+			}
+		
+			case log_msg::kCmdQuad: {
+				log_msg::DrawQuads *q = (log_msg::DrawQuads *)b;
+				for (uint32_t i = 0; i < q->count; ++i) {
+					log_msg::Quad *cur = &q->quads[i];
+					uint32_t col32 = cur->fill_color;
+					float x = (float)cur->x;
+					float y = (float)cur->y;
+					float h = (float)cur->height;
+					float w = (float)cur->width;
+#define MK_COL(x, shift) ((x >> shift) & 0xff) / 255.0f
+					XMFLOAT4 col(MK_COL(col32, 24), MK_COL(col32, 16), MK_COL(col32, 8), MK_COL(col32, 0));
+#undef MK_COL
+					// 1, 2
+					// 0, 3
+					int v = (int)verts.size();
+					verts.push_back(PosCol(x,   y+h, 1, col));
+					verts.push_back(PosCol(x,   y,   1, col));
+					verts.push_back(PosCol(x+w, y,   1, col));
+					verts.push_back(PosCol(x+w, y+h, 1, col));
+
+					indices.push_back(v+0); indices.push_back(v+1); indices.push_back(v+2);
+					indices.push_back(v+0); indices.push_back(v+2); indices.push_back(v+3);
+				}
+				ptr += sizeof(log_msg::DrawQuads) + q->count * sizeof(log_msg::Quad);
+				break;
+			}
+		}
+	}
+
+	if (!_vb)
+		_vb.reset(new DynamicVb<PosCol>(device, context));
+	_vb->fill(verts);
+
+
+	if (!_ib)
+		_ib.reset(new DynamicIb<uint32>(device, context));
+	_ib->fill(indices);
+
+	ID3D11Buffer *bufs[] = { _vb->get() };
+	UINT strides[] = { sizeof(PosCol) };
+	UINT ofs[] = { 0 };
+	context->IASetVertexBuffers(0, 1, bufs, strides, ofs);
+	context->IASetIndexBuffer(_ib->get(), DXGI_FORMAT_R32_UINT, 0);
+	context->IASetInputLayout(_layout);
+	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+	context->RSSetState(_rs);
+	context->OMSetDepthStencilState(_dss, ~0);
+
+	context->VSSetShader(_vs, NULL, 0);
+
+	D3D11_MAPPED_SUBRESOURCE res;
+	context->Map(_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &res);
+	*(XMMATRIX *)res.pData = mtx_proj;
+	context->Unmap(_cb, 0);
+
+	context->VSSetConstantBuffers(0, 1, &(_cb.p));
+
+	context->PSSetShader(_ps, NULL, 0);
+
+	context->DrawIndexed(indices.size(), 0, 0);
+
+	_graphics->present();
+}
+
+DWORD WINAPI LogServer::server_thread(void *data) {
+
+	unique_ptr<ThreadConfig> config((ThreadConfig *)data);
+
+	HWND wnd = config->wnd;
+	LogServer *self = config->log_server;
+	void *context = config->context;
 	void *responder = zmq_socket(context, ZMQ_PULL);
 	zmq_bind(responder, "tcp://*:5555");
+
+	// create initial slab
+	int slab_size = 10 * 1024 * 1024;
+	self->_slabs.push_back(new uint8[slab_size]);
+	uint8 *cur_slab = self->_slabs.back();
+	int left = slab_size;
+
+	int frame_balance = 0;
+	bool skipping = false;
+	uint8 *start_ptr = cur_slab;
+	uint8 *cur_ptr = cur_slab;
 
 	while (true) {
 		zmq_msg_t request;
@@ -108,17 +167,49 @@ DWORD WINAPI LogServer::server_thread(void *context) {
 
 		switch (msg->cmd) {
 
+			// handle frame markers
 			case log_msg::kCmdBeginFrame: {
-				log_msg::BeginFrame *f = static_cast<log_msg::BeginFrame *>(msg);
+				if (++frame_balance != 1) {
+					// skip nested frames..
+					skipping = true;
+				} else {
+					start_ptr = cur_ptr;
+					log_msg::BeginFrame *f = static_cast<log_msg::BeginFrame *>(msg);
+				}
 				break;
 			}
 
 			case log_msg::kCmdEndFrame: {
-				log_msg::EndFrame *f = static_cast<log_msg::EndFrame *>(msg);
+				if (--frame_balance != 0) {
+					skipping = true;
+				} else {
+					log_msg::EndFrame *f = static_cast<log_msg::EndFrame *>(msg);
+					// report a completed frame
+					PostMessage(wnd, WM_NEW_FRAME, (WPARAM)new NewFrameMsg(start_ptr, cur_ptr), 0);
+				}
+				break;
+			}
+
+			// handle render commands
+			case log_msg::kCmdQuad:
+			case log_msg::kCmdSetupWindow: {
+				if (!skipping) {
+					int req_size = zmq_msg_size(&request);
+					// if the frame doesn't fit in the current slab, we move the frame to a new slab
+					if (req_size > left) {
+						slab_size = max(slab_size, 2 * req_size);
+						self->_slabs.push_back(new uint8[slab_size]);
+						cur_slab = self->_slabs.back();
+						memcpy(cur_slab, start_ptr, cur_ptr - start_ptr);
+						start_ptr = cur_ptr = cur_slab;
+					}
+					memcpy(cur_ptr, msg, req_size);
+					cur_ptr += req_size;
+					left -= req_size;
+				}
 				break;
 			}
 		}
-
 
 		zmq_msg_close(&request);
 	}
@@ -127,11 +218,57 @@ DWORD WINAPI LogServer::server_thread(void *context) {
 	return 0;
 }
 
+LogServer::LogServer()
+	: _server_thread(INVALID_HANDLE_VALUE)
+	, _context(nullptr)
+{
+}
 
-bool LogServer::init() {
+bool LogServer::init(HINSTANCE hInstance) {
 
-	_context = zmq_init(1);
-	_server_thread = CreateThread(NULL, 0, server_thread, _context, 0, NULL);
+	_window.reset(new Window(hInstance, 640, 480, "test", "test", &LogServer::WndProc));
+	if (!_window->create(this))
+		return false;
+
+	_graphics.reset(new Graphics());
+	if (!_graphics->init(_window.get()))
+		return 1;
+
+	ID3D11Device *device = _graphics->device();
+
+	D3D11_INPUT_ELEMENT_DESC desc[] = {
+		{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+		{"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
+	};
+
+	if (!create_shaders_from_file("log_server.hlsl", _graphics->feature_level(), device, "vs_main", "ps_main", desc, ELEMS_IN_ARRAY(desc), &_vs.p, &_ps.p, &_layout.p))
+		return false;
+
+	if (FAILED(create_dynamic_constant_buffer(device, sizeof(XMMATRIX), &_cb.p)))
+		return false;
+
+	CD3D11_BLEND_DESC blend_desc = CD3D11_BLEND_DESC(CD3D11_DEFAULT());
+	CD3D11_RASTERIZER_DESC rasterize_desc = CD3D11_RASTERIZER_DESC(CD3D11_DEFAULT());
+	CD3D11_DEPTH_STENCIL_DESC dss_desc = CD3D11_DEPTH_STENCIL_DESC(CD3D11_DEFAULT());
+
+	rasterize_desc.CullMode = D3D11_CULL_NONE;
+	dss_desc.DepthEnable = FALSE;
+
+	if (FAILED(device->CreateDepthStencilState(&dss_desc, &_dss.p)))
+		return false;
+
+	if (FAILED(device->CreateRasterizerState(&rasterize_desc, &_rs.p)))
+		return false;
+
+	if (FAILED(device->CreateBlendState(&blend_desc, &_bs.p)))
+		return false;
+
+	ThreadConfig *config = new ThreadConfig();
+	config->wnd = _window->hwnd();
+
+	config->log_server = this;
+	config->context = _context = zmq_init(1);
+	_server_thread = CreateThread(NULL, 0, server_thread, config, 0, NULL);
 
 	return true;
 }
@@ -139,52 +276,14 @@ bool LogServer::init() {
 void LogServer::close() {
 	zmq_term(_context);
 	WaitForSingleObject(_server_thread, INFINITE);
-}
-
-//
-// Hello World server in C++
-// Binds REP socket to tcp://*:5555
-// Expects "Hello" from client, replies with "World"
-//
-#include <zmq.hpp>
-#include <string>
-#include <iostream>
-//#include <unistd.h>
-
-int main2() {
-	// Prepare our context and socket
-	zmq::context_t context (1);
-	zmq::socket_t socket (context, ZMQ_REP);
-	socket.bind ("tcp://*:5555");
-
-	while (true) {
-		zmq::message_t request;
-
-		// Wait for next request from client
-		socket.recv (&request);
-		std::cout << "Received Hello" << std::endl;
-
-		// Do some 'work'
-		//sleep (1);
-
-		// Send reply back to client
-		zmq::message_t reply (5);
-		memcpy ((void *) reply.data (), "World", 5);
-		socket.send (reply);
-	}
-	return 0;
+	CloseHandle(_server_thread);
+	_server_thread = INVALID_HANDLE_VALUE;
 }
 
 int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd) {
 
-	//return main2();
-
-	Window window(hInstance, 640, 480, "test", "test", WndProc);
-	if (!window.create())
-		return 1;
-
 	LogServer server;
-	if (!server.init())
+	if (!server.init(hInstance))
 		return 1;
 
 	MSG msg = {0};
@@ -198,7 +297,6 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 	}
 
 	server.close();
-
 
 	return 0;
 }
