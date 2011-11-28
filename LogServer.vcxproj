@@ -62,7 +62,7 @@
       <PrecompiledHeader>Use</PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
       <DebugInformationFormat>EditAndContinue</DebugInformationFormat>
-      <DisableSpecificWarnings>4355</DisableSpecificWarnings>
+      <DisableSpecificWarnings>4355; 4200</DisableSpecificWarnings>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -91,6 +91,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="bmfont.cpp" />
     <ClCompile Include="dx_utils.cpp" />
     <ClCompile Include="file_utils.cpp" />
     <ClCompile Include="graphics.cpp" />
@@ -99,10 +100,12 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="string_utils.cpp" />
     <ClCompile Include="utils.cpp" />
     <ClCompile Include="window.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="bmfont.hpp" />
     <ClInclude Include="dx_utils.hpp" />
     <ClInclude Include="dynamic_buffers.hpp" />
     <ClInclude Include="file_utils.hpp" />
@@ -110,6 +113,7 @@
     <ClInclude Include="log_messages.hpp" />
     <ClInclude Include="log_server.hpp" />
     <ClInclude Include="stdafx.h" />
+    <ClInclude Include="string_utils.hpp" />
     <ClInclude Include="targetver.h" />
     <ClInclude Include="utils.hpp" />
     <ClInclude Include="vertex_types.hpp" />

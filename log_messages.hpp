@@ -19,7 +19,7 @@ namespace log_msg {
 
 	struct Quad {
 		int x, y, width, height;
-		uint32_t fill_color;
+		uint32_t fill_color;  // RGBA
 	};
 
 	struct Base {

@@ -3,6 +3,13 @@
 class Window;
 struct RenderTargetData;
 
+struct TextureData {
+	D3D11_TEXTURE2D_DESC texture_desc;
+	D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc;
+	CComPtr<ID3D11Texture2D> texture;
+	CComPtr<ID3D11ShaderResourceView> srv;
+};
+
 class Graphics {
 public:
 	bool init(const Window *window);
@@ -13,6 +20,8 @@ public:
 	ID3D11DeviceContext *context() { return _immediate_context; }
 
 	D3D_FEATURE_LEVEL feature_level() { return _feature_level; }
+	bool create_texture(const D3D11_TEXTURE2D_DESC &desc, TextureData *out);
+	bool create_texture_from_file(const char *filename, TextureData *out);
 private:
 
 	bool create_back_buffers(int width, int height);

@@ -6,6 +6,8 @@
 #include "dynamic_buffers.hpp"
 #include "dx_utils.hpp"
 #include "utils.hpp"
+#include "file_utils.hpp"
+#include "bmfont.hpp"
 
 static const uint32 WM_NEW_FRAME = WM_APP + 1;
 
@@ -123,7 +125,7 @@ void LogServer::handle_new_frame_msg(const NewFrameMsg *msg) {
 
 	D3D11_MAPPED_SUBRESOURCE res;
 	context->Map(_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &res);
-	*(XMMATRIX *)res.pData = mtx_proj;
+	*(XMMATRIX *)res.pData = XMMatrixTranspose(mtx_proj);
 	context->Unmap(_cb, 0);
 
 	context->VSSetConstantBuffers(0, 1, &(_cb.p));
@@ -235,6 +237,7 @@ bool LogServer::init(HINSTANCE hInstance) {
 		return 1;
 
 	ID3D11Device *device = _graphics->device();
+	ID3D11DeviceContext *context = _graphics->context();
 
 	D3D11_INPUT_ELEMENT_DESC desc[] = {
 		{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
@@ -251,7 +254,6 @@ bool LogServer::init(HINSTANCE hInstance) {
 	CD3D11_RASTERIZER_DESC rasterize_desc = CD3D11_RASTERIZER_DESC(CD3D11_DEFAULT());
 	CD3D11_DEPTH_STENCIL_DESC dss_desc = CD3D11_DEPTH_STENCIL_DESC(CD3D11_DEFAULT());
 
-	rasterize_desc.CullMode = D3D11_CULL_NONE;
 	dss_desc.DepthEnable = FALSE;
 
 	if (FAILED(device->CreateDepthStencilState(&dss_desc, &_dss.p)))
@@ -270,6 +272,12 @@ bool LogServer::init(HINSTANCE hInstance) {
 	config->context = _context = zmq_init(1);
 	_server_thread = CreateThread(NULL, 0, server_thread, config, 0, NULL);
 
+	_font.reset(new BmFont(_graphics.get()));
+	if (!_font->create_from_file("test2.fnt"))
+		return false;
+
+	_font->render("magnus: %d", 52);
+
 	return true;
 }
 
@@ -279,6 +287,7 @@ void LogServer::close() {
 	CloseHandle(_server_thread);
 	_server_thread = INVALID_HANDLE_VALUE;
 }
+
 
 int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd) {
 

@@ -7,7 +7,7 @@ using namespace std;
 #pragma comment(lib, "DXGI.lib")
 #pragma comment(lib, "DXGUID.lib")
 #pragma comment(lib, "D3D11.lib")
-
+#pragma comment(lib, "D3DX11.lib")
 
 #define B_ERR_HR(x) if (FAILED(x)) return false;
 #define B_ERR_BOOL(x) if (!(x)) return false;
@@ -138,4 +138,36 @@ void Graphics::clear(const XMFLOAT4 &c) {
 
 void Graphics::present() {
 	_swap_chain->Present(0,0);
+}
+
+bool Graphics::create_texture_from_file(const char *filename, TextureData *out) {
+
+	out->srv = nullptr;
+	out->texture = nullptr;
+
+	if (FAILED(D3DX11CreateShaderResourceViewFromFile(_device, filename, NULL, NULL, &out->srv.p, NULL)))
+		return false;
+
+	return true;
+}
+
+bool Graphics::create_texture(const D3D11_TEXTURE2D_DESC &desc, TextureData *out)
+{
+	out->srv = nullptr;
+	out->texture = nullptr;
+
+	// create the texture
+	ZeroMemory(&out->texture_desc, sizeof(out->texture_desc));
+	out->texture_desc = desc;
+	if (FAILED(_device->CreateTexture2D(&out->texture_desc, NULL, &out->texture.p)))
+		return false;
+
+	// create the shader resource view if the texture has a shader resource bind flag
+	if (desc.BindFlags & D3D11_BIND_SHADER_RESOURCE) {
+		out->srv_desc = CD3D11_SHADER_RESOURCE_VIEW_DESC(D3D11_SRV_DIMENSION_TEXTURE2D, out->texture_desc.Format);
+		if (FAILED(_device->CreateShaderResourceView(out->texture, &out->srv_desc, &out->srv.p)))
+			return false;
+	}
+
+	return true;
 }

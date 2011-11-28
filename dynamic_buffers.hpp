@@ -50,8 +50,8 @@ protected:
 	T *_org;
 	int _count, _capacity;
 	CComPtr<ID3D11Buffer> _buffer;
-	ID3D11Device *_device;
-	ID3D11DeviceContext *_context;
+	CComPtr<ID3D11Device> _device;
+	CComPtr<ID3D11DeviceContext> _context;
 };
 
 // Helper classes for dynamic vertex and index buffers
