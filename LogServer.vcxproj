@@ -91,10 +91,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="bmfont.cpp" />
-    <ClCompile Include="dx_utils.cpp" />
     <ClCompile Include="file_utils.cpp" />
-    <ClCompile Include="graphics.cpp" />
     <ClCompile Include="log_server.cpp" />
     <ClCompile Include="stdafx.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
@@ -105,18 +102,13 @@
     <ClCompile Include="window.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="bmfont.hpp" />
-    <ClInclude Include="dx_utils.hpp" />
-    <ClInclude Include="dynamic_buffers.hpp" />
     <ClInclude Include="file_utils.hpp" />
-    <ClInclude Include="graphics.hpp" />
     <ClInclude Include="log_messages.hpp" />
     <ClInclude Include="log_server.hpp" />
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="string_utils.hpp" />
     <ClInclude Include="targetver.h" />
     <ClInclude Include="utils.hpp" />
-    <ClInclude Include="vertex_types.hpp" />
     <ClInclude Include="window.hpp" />
   </ItemGroup>
   <ItemGroup>

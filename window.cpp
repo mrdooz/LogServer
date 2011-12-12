@@ -8,7 +8,13 @@ Window::Window(HINSTANCE instance, int width, int height, const std::string &cla
 	, _class_name(class_name)
 	, _window_name(window_name)
 	, _wnd_proc(wndproc)
+	, _dc(NULL)
 {
+}
+
+Window::~Window() {
+	if (_hwnd && _dc)
+		ReleaseDC(_hwnd, _dc);
 }
 
 void Window::set_client_size()
@@ -32,7 +38,7 @@ bool Window::create(void *lparam)
 	ZeroMemory(&wcex, sizeof(wcex));
 
 	wcex.cbSize = sizeof(WNDCLASSEX);
-	wcex.style          = CS_HREDRAW | CS_VREDRAW;
+	wcex.style          = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;
 	wcex.lpfnWndProc    = _wnd_proc;
 	wcex.hInstance      = _instance;
 	wcex.hbrBackground  = 0;
@@ -50,6 +56,8 @@ bool Window::create(void *lparam)
 	set_client_size();
 
 	ShowWindow(_hwnd, SW_SHOW);
+
+	_dc = GetDC(_hwnd);
 
 	return true;
 }

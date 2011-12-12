@@ -1,13 +1,13 @@
 #include "stdafx.h"
-#include "log_messages.hpp"
 #include "log_server.hpp"
 #include "window.hpp"
-#include "graphics.hpp"
-#include "dynamic_buffers.hpp"
-#include "dx_utils.hpp"
 #include "utils.hpp"
 #include "file_utils.hpp"
-#include "bmfont.hpp"
+#include "cairo/include/cairo/cairo.h"
+#include "cairo/include/cairo/cairo-win32.h"
+#include "log_messages.hpp"
+
+#pragma comment(lib, "cairo/lib/cairo.lib")
 
 static const uint32 WM_NEW_FRAME = WM_APP + 1;
 
@@ -53,12 +53,16 @@ LRESULT CALLBACK LogServer::WndProc( HWND hWnd, UINT message, WPARAM wParam, LPA
 
 void LogServer::handle_new_frame_msg(const NewFrameMsg *msg) {
 
-	ID3D11Device *device = _graphics->device();
-	ID3D11DeviceContext *context = _graphics->context();
-	XMMATRIX mtx_proj = XMMatrixIdentity();
+	cairo_t *ctx = _cairo._context;
 
-	vector<PosCol> verts;
-	vector<uint32> indices;
+	// scale factors
+	double sx = 1, sy = 1;
+	double ox = _cairo.x1, oy = _cairo.y1;
+
+	// only call fill when the previous color changes
+	double pr = -1, pg = -1, pb = -1, pa = -1;
+	bool first_time = true;
+	bool quads_remaining = false;
 
 	uint8 *ptr = (uint8 *)msg->start;
 	while (ptr != msg->end) {
@@ -67,33 +71,36 @@ void LogServer::handle_new_frame_msg(const NewFrameMsg *msg) {
 
 			case log_msg::kCmdSetupWindow: {
 				log_msg::SetupWindow *s = (log_msg::SetupWindow *)b;
-				mtx_proj = XMMatrixOrthographicOffCenterLH(0, (float)s->width, 0, (float)s->height, 1, 100);
+				sx = s->width ? _cairo.width() / s->width : 1;
+				sy = s->height ? _cairo.height() / s->height : 1;
 				ptr += sizeof(log_msg::SetupWindow);
 				break;
 			}
-		
+
 			case log_msg::kCmdQuad: {
 				log_msg::DrawQuads *q = (log_msg::DrawQuads *)b;
 				for (uint32_t i = 0; i < q->count; ++i) {
 					log_msg::Quad *cur = &q->quads[i];
 					uint32_t col32 = cur->fill_color;
-					float x = (float)cur->x;
-					float y = (float)cur->y;
-					float h = (float)cur->height;
-					float w = (float)cur->width;
-#define MK_COL(x, shift) ((x >> shift) & 0xff) / 255.0f
-					XMFLOAT4 col(MK_COL(col32, 24), MK_COL(col32, 16), MK_COL(col32, 8), MK_COL(col32, 0));
-#undef MK_COL
-					// 1, 2
-					// 0, 3
-					int v = (int)verts.size();
-					verts.push_back(PosCol(x,   y+h, 1, col));
-					verts.push_back(PosCol(x,   y,   1, col));
-					verts.push_back(PosCol(x+w, y,   1, col));
-					verts.push_back(PosCol(x+w, y+h, 1, col));
+					double x = (double)cur->x;
+					double y = (double)cur->y;
+					double h = (double)cur->height;
+					double w = (double)cur->width;
+	#define MK_COL(x, shift) ((x >> shift) & 0xff) / 255.0f
+					double r = MK_COL(col32, 24), g = MK_COL(col32, 16), b = MK_COL(col32, 8), a = MK_COL(col32, 0);
+	#undef MK_COL
 
-					indices.push_back(v+0); indices.push_back(v+1); indices.push_back(v+2);
-					indices.push_back(v+0); indices.push_back(v+2); indices.push_back(v+3);
+					const bool got_new_color = r != pr || g != pg || b != pb || a != pa;
+					if (first_time || got_new_color) {
+						// draw the old stuff first
+						if (!first_time)
+							cairo_fill(ctx);
+						first_time = false;
+						cairo_set_source_rgba(ctx, r, g, b, a);
+						pr = r; pg = g; pb = b; pa = a;
+						quads_remaining = true;
+					}
+					cairo_rectangle(ctx, ox + x * sx, oy + y * sy, w * sx, h * sy);
 				}
 				ptr += sizeof(log_msg::DrawQuads) + q->count * sizeof(log_msg::Quad);
 				break;
@@ -101,40 +108,8 @@ void LogServer::handle_new_frame_msg(const NewFrameMsg *msg) {
 		}
 	}
 
-	if (!_vb)
-		_vb.reset(new DynamicVb<PosCol>(device, context));
-	_vb->fill(verts);
-
-
-	if (!_ib)
-		_ib.reset(new DynamicIb<uint32>(device, context));
-	_ib->fill(indices);
-
-	ID3D11Buffer *bufs[] = { _vb->get() };
-	UINT strides[] = { sizeof(PosCol) };
-	UINT ofs[] = { 0 };
-	context->IASetVertexBuffers(0, 1, bufs, strides, ofs);
-	context->IASetIndexBuffer(_ib->get(), DXGI_FORMAT_R32_UINT, 0);
-	context->IASetInputLayout(_layout);
-	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-
-	context->RSSetState(_rs);
-	context->OMSetDepthStencilState(_dss, ~0);
-
-	context->VSSetShader(_vs, NULL, 0);
-
-	D3D11_MAPPED_SUBRESOURCE res;
-	context->Map(_cb, 0, D3D11_MAP_WRITE_DISCARD, 0, &res);
-	*(XMMATRIX *)res.pData = XMMatrixTranspose(mtx_proj);
-	context->Unmap(_cb, 0);
-
-	context->VSSetConstantBuffers(0, 1, &(_cb.p));
-
-	context->PSSetShader(_ps, NULL, 0);
-
-	context->DrawIndexed(indices.size(), 0, 0);
-
-	_graphics->present();
+	if (quads_remaining)
+		cairo_fill(ctx);
 }
 
 DWORD WINAPI LogServer::server_thread(void *data) {
@@ -221,9 +196,24 @@ DWORD WINAPI LogServer::server_thread(void *data) {
 }
 
 LogServer::LogServer()
-	: _server_thread(INVALID_HANDLE_VALUE)
-	, _context(nullptr)
 {
+}
+
+bool LogServer::Cairo::init(HDC dc) {
+	if (!(_surface = cairo_win32_surface_create(dc)))
+		return false;
+
+	if (!(_context = cairo_create(_surface)))
+		return false;
+
+	cairo_clip_extents(_context, &x1, &y1, &x2, &y2);
+
+	return true;
+}
+
+void LogServer::Cairo::close() {
+	cairo_destroy(_context);
+	cairo_surface_destroy(_surface);
 }
 
 bool LogServer::init(HINSTANCE hInstance) {
@@ -232,60 +222,24 @@ bool LogServer::init(HINSTANCE hInstance) {
 	if (!_window->create(this))
 		return false;
 
-	_graphics.reset(new Graphics());
-	if (!_graphics->init(_window.get()))
-		return 1;
-
-	ID3D11Device *device = _graphics->device();
-	ID3D11DeviceContext *context = _graphics->context();
-
-	D3D11_INPUT_ELEMENT_DESC desc[] = {
-		{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
-		{"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
-	};
-
-	if (!create_shaders_from_file("log_server.hlsl", _graphics->feature_level(), device, "vs_main", "ps_main", desc, ELEMS_IN_ARRAY(desc), &_vs.p, &_ps.p, &_layout.p))
-		return false;
-
-	if (FAILED(create_dynamic_constant_buffer(device, sizeof(XMMATRIX), &_cb.p)))
-		return false;
-
-	CD3D11_BLEND_DESC blend_desc = CD3D11_BLEND_DESC(CD3D11_DEFAULT());
-	CD3D11_RASTERIZER_DESC rasterize_desc = CD3D11_RASTERIZER_DESC(CD3D11_DEFAULT());
-	CD3D11_DEPTH_STENCIL_DESC dss_desc = CD3D11_DEPTH_STENCIL_DESC(CD3D11_DEFAULT());
-
-	dss_desc.DepthEnable = FALSE;
-
-	if (FAILED(device->CreateDepthStencilState(&dss_desc, &_dss.p)))
-		return false;
-
-	if (FAILED(device->CreateRasterizerState(&rasterize_desc, &_rs.p)))
-		return false;
-
-	if (FAILED(device->CreateBlendState(&blend_desc, &_bs.p)))
+	if (!_cairo.init(_window->dc()))
 		return false;
 
 	ThreadConfig *config = new ThreadConfig();
 	config->wnd = _window->hwnd();
 
 	config->log_server = this;
-	config->context = _context = zmq_init(1);
-	_server_thread = CreateThread(NULL, 0, server_thread, config, 0, NULL);
-
-	_font.reset(new BmFont(_graphics.get()));
-	if (!_font->create_from_file("test2.fnt"))
-		return false;
-
-	_font->render("magnus: %d", 52);
+	config->context = _zmq._context = zmq_init(1);
+	_zmq._server_thread = CreateThread(NULL, 0, server_thread, config, 0, NULL);
 
 	return true;
 }
 
 void LogServer::close() {
-	zmq_term(_context);
-	WaitForSingleObject(_server_thread, INFINITE);
-	CloseHandle(_server_thread);
-	_server_thread = INVALID_HANDLE_VALUE;
+	zmq_term(_zmq._context);
+	WaitForSingleObject(_zmq._server_thread, INFINITE);
+	CloseHandle(_zmq._server_thread);
+	_zmq._server_thread = INVALID_HANDLE_VALUE;
 }
 
 

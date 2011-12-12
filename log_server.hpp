@@ -5,6 +5,9 @@ class Graphics;
 class BmFont;
 struct NewFrameMsg;
 
+struct _cairo_surface;
+struct _cairo;
+
 template <typename vtx> class DynamicVb;
 template <typename idx> class DynamicIb;
 
@@ -21,23 +24,23 @@ private:
 	static DWORD WINAPI server_thread(LPVOID data);
 	std::vector<uint8 *> _slabs;
 
-	std::unique_ptr<DynamicVb<PosCol>> _vb;
-	std::unique_ptr<DynamicIb<uint32_t>> _ib;
-
-	CComPtr<ID3D11Buffer> _cb;
-	CComPtr<ID3D11InputLayout> _layout;
-	CComPtr<ID3D11VertexShader> _vs;
-	CComPtr<ID3D11PixelShader> _ps;
-
-	CComPtr<ID3D11RasterizerState> _rs;
-	CComPtr<ID3D11DepthStencilState> _dss;
-	CComPtr<ID3D11BlendState> _bs;
-
 	std::unique_ptr<Window> _window;
-	std::unique_ptr<Graphics> _graphics;
 
-	std::unique_ptr<BmFont> _font;
+	struct Zmq {
+		Zmq() : _server_thread(INVALID_HANDLE_VALUE), _context(nullptr) {}
+		HANDLE _server_thread;
+		void *_context;
+	} _zmq;
 
-	HANDLE _server_thread;
-	void *_context;
+	struct Cairo {
+		Cairo() : _surface(nullptr), _context(nullptr) {}
+		bool init(HDC dc);
+		void close();
+		double width() { return x2 - x1; }
+		double height() { return y2 - y1; }
+		struct _cairo_surface *_surface;
+		struct _cairo *_context;
+		double x1, y1, x2, y2;
+	} _cairo;
+
 };
